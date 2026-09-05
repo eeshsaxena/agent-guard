@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to config.json (or run `agentguard install`). Folders the agent may read/write; anything outside is blocked when enforce=true. Edits take effect immediately. Set enforce=false to log-only.",
+  "enforce": true,
+  "allowed_roots": [
+    "C:\\Users\\you\\Downloads",
+    "C:\\Users\\you\\.claude"
+  ],
+  "log_path": "C:\\Users\\you\\.agentguard\\access-log.jsonl"
+}
