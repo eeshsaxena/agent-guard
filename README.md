@@ -14,7 +14,8 @@ before every tool call. It does two things:
    the clearest credential-exfiltration case.
 
 For a real OS-level fence around a single command, there's also
-[`agentguard run`](#sandboxed-run-agentguard-run).
+[`agentguard run`](#sandboxed-run-agentguard-run). The same policy runs behind
+other coding agents too, via [adapters](#beyond-claude-code-other-agents).
 
 Pure Python standard library. No dependencies, no telemetry, nothing leaves your
 machine.
@@ -175,6 +176,87 @@ Support is per-OS, and honest about it:
 If no sandbox tool is found on Linux or macOS, `run` prints how to install one
 and refuses to run the command unsandboxed.
 
+## Beyond Claude Code: other agents
+
+The policy, the audit log, and the fence don't care which agent asked. Only the
+*wire format* does: how a given agent hands you a pending tool call, and how it
+expects a "no" back. agent-guard splits that seam with **adapters**.
+
+An adapter does two small things: parse the agent's pre-tool-call event into one
+normalized shape, and emit the verdict the way that agent expects. Everything in
+between (allowed roots, Bash inspection, the hash-chained log, the desktop alert)
+is shared. Pick one with `--agent`:
+
+```bash
+agentguard hook --agent gemini-cli
+```
+
+The default is `claude-code`, so the existing hook keeps working with no change.
+
+| Agent | How it integrates | Can it block? |
+| --- | --- | --- |
+| **claude-code** | `PreToolUse` hook: `{tool_name, tool_input, cwd}` on stdin, **exit 2** blocks, stderr is the reason. | Yes |
+| **gemini-cli** | [`BeforeTool` hook](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md): same stdin shape and same exit-2 + stderr contract as Claude Code, different tool names. | Yes |
+| **cursor** | [`beforeShellExecution` / `beforeReadFile` hooks](https://cursor.com/docs/hooks): the verdict goes back as `{"permission":"deny"}` JSON on **stdout** (exit 2 is a documented fallback). | Yes |
+| **generic** | Pipe the normalized schema below. **exit 2** blocks. Any agent or wrapper that can shell out can use it. | Yes |
+
+**These hooks are advisory.** They fire *before* the tool and can refuse it, but
+nothing in the agent stops a subprocess that already got past the prompt from
+touching the disk directly. Cursor [fails open](https://cursor.com/docs/hooks) if
+the hook crashes, and opencode's plugin hooks
+[don't even see subagent tool calls](https://github.com/anomalyco/opencode/issues/5894).
+Treat the hook as the tripwire and the log; when you need an actual fence, run the
+risky command under [`agentguard run`](#sandboxed-run-agentguard-run), which is
+the one enforcement path that doesn't depend on the agent cooperating.
+
+### The generic schema
+
+`--agent generic` reads this JSON on stdin. Every field is optional; send the
+ones that apply.
+
+```json
+{ "tool": "run",
+  "paths": ["/abs/path/it/will/read/or/write"],
+  "command": "the shell command, if any",
+  "url": "the fetch target, if any",
+  "cwd": "/working/dir" }
+```
+
+`paths` are checked against your allowed roots; `command` goes through Bash
+inspection; `url` is recorded. Exit `2` means block (reason on stderr), `0`
+allows. So a one-line wrapper is enough to put any agent behind agent-guard, for
+example an [opencode](https://opencode.ai/docs/plugins/) `tool.execute.before`
+plugin that pipes `{tool, command, paths}` to `agentguard hook --agent generic`
+and throws when it exits non-zero.
+
+### Agents without a usable blocking hook
+
+Not every tool exposes a pre-tool hook that can *stop* a call, and this section
+stays honest about that rather than shipping a fake adapter:
+
+- **Codex CLI** — its `notify` hook is a doorbell that fires *after* the fact and
+  [cannot block](https://backgrind.com/blog/codex-cli-notifications/); synchronous
+  `PreToolUse`-style blocking is still
+  [an emerging proposal](https://github.com/openai/codex/issues/14882).
+- **opencode** — hooks are in-process TypeScript plugins, not an external command;
+  integrate with the `generic` adapter from a `tool.execute.before` plugin.
+- **Cline, aider** — no external pre-tool hook that vetoes a call.
+
+For all of these, use the `generic` adapter where you can pipe an event, and
+`agentguard run` as the universal fallback fence. (Citations above are what these
+tools' own docs say; if an agent ships a real blocking hook later, it's a small
+adapter to add.)
+
+### Adding an adapter
+
+An adapter is a small class in `agentguard/adapters.py`. If the agent's hook reads
+a tool event on stdin and blocks with exit 2, subclass `_StdinExitAdapter` and set
+its tool vocabulary (which tool names are file ops, where the path / command / url
+live) — that's the whole `gemini-cli` adapter. If it speaks a different protocol
+(like Cursor's stdout verdict), give it its own `parse` and `emit`. Then add it to
+the registry. The shared `core.decide` is what every adapter calls, so a new agent
+inherits the exact same policy the Claude Code hook enforces.
+
 ## Commands
 
 | Command | What it does |
@@ -186,7 +268,7 @@ and refuses to run the command unsandboxed.
 | `agentguard verify-log` | Recompute the audit log's hash chain; report tampering and exit non-zero if broken. |
 | `agentguard status` | Print config, whether the hook is installed, and recent counts. |
 | `agentguard harden` | Show credential read-deny rules to add to Claude Code's own permissions (dry-run; `--apply` to write). |
-| `agentguard hook` | The guard itself — what Claude Code invokes. You won't run this by hand. |
+| `agentguard hook [--agent NAME]` | The guard itself — what the agent invokes on each tool call. `--agent` selects the wire format (default `claude-code`; see [Beyond Claude Code](#beyond-claude-code-other-agents)). You won't run this by hand. |
 
 ### `harden`
 
