@@ -14,7 +14,7 @@ Pure Python standard library. No dependencies, no telemetry, nothing leaves your
 machine.
 
 ```bash
-pip install agentguard
+pip install sneakoscope   # the CLI is `agentguard` (alias: `sneakoscope`)
 agentguard install      # adds the PreToolUse hook to ~/.claude/settings.json
 agentguard dashboard    # http://127.0.0.1:8799
 ```
