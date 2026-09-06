@@ -171,3 +171,39 @@ def test_alerts_false_suppresses_alert(ag_config, monkeypatch):
     outside = str(ag_config.tmp / "elsewhere" / "x.txt")
     assert guard.run(_payload("Read", file_path=outside)) == 2  # still blocked
     assert calls == []  # but no notification
+
+
+def test_block_alert_failure_is_swallowed(ag_config, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("notifier down")
+
+    monkeypatch.setattr(alerts, "notify", boom)
+    outside = str(ag_config.tmp / "elsewhere" / "x.txt")
+    # A broken notifier must never turn a clean block into a crash.
+    assert guard.run(_payload("Read", file_path=outside)) == 2
+
+
+def test_main_reads_stdin(ag_config, monkeypatch):
+    import io
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    monkeypatch.setattr("sys.stdin", io.StringIO(_payload("Read", file_path=inside)))
+    assert guard.main() == 0
+
+
+def test_append_after_legacy_line_restarts_chain(ag_config):
+    # A pre-hash legacy line already in the log: the next entry chains onto
+    # GENESIS rather than trying to link to an unhashed record.
+    ag_config.log.write_text(json.dumps({"tool": "Read", "ts": 0}) + "\n", encoding="utf-8")
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    guard.run(_payload("Read", file_path=inside))
+    entry = _read_log(ag_config.log)[-1]
+    assert entry["prev_hash"] == integrity.GENESIS
+    assert "hash" in entry
+
+
+def test_append_to_blank_only_log_starts_at_genesis(ag_config):
+    ag_config.log.write_text("\n\n", encoding="utf-8")  # only blank lines in the tail
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    guard.run(_payload("Read", file_path=inside))
+    lines = [ln for ln in ag_config.log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert json.loads(lines[-1])["prev_hash"] == integrity.GENESIS

@@ -1,5 +1,9 @@
 from agentguard import alerts
 
+# Captured before the autouse conftest fixture stubs out alerts._spawn, so these
+# two tests can exercise the real dispatcher.
+_REAL_SPAWN = alerts._spawn
+
 
 def test_windows_command_uses_powershell_notifyicon():
     argv = alerts.build_alert_command("Windows", "title", "hello")
@@ -67,3 +71,26 @@ def test_notify_swallows_runner_errors():
 
     # A failing notifier must never propagate out of notify().
     assert alerts.notify("t", "m", system="Linux", runner=boom) is False
+
+
+def test_spawn_launches_detached_and_discards_streams(monkeypatch):
+    seen = {}
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(alerts.subprocess, "Popen", fake_popen)
+    _REAL_SPAWN(["notify-send", "title", "message"])
+    assert seen["argv"] == ["notify-send", "title", "message"]
+    assert seen["kwargs"]["stdout"] == alerts.subprocess.DEVNULL
+    assert seen["kwargs"]["stdin"] == alerts.subprocess.DEVNULL
+
+
+def test_spawn_swallows_popen_errors(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("cannot spawn")
+
+    monkeypatch.setattr(alerts.subprocess, "Popen", boom)
+    _REAL_SPAWN(["notify-send"])  # must not raise

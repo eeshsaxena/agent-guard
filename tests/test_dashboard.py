@@ -82,3 +82,21 @@ def test_top_folders_groups_by_parent():
     ]
     html = dashboard.render(entries)
     assert "/proj" in html
+
+
+def test_target_falls_back_to_command_for_shell_entries():
+    now = time.time()
+    entries = [{"ts": now, "tool": "Bash", "paths": [], "command": "git status", "outside": [], "blocked": False}]
+    html = dashboard.render(entries)
+    assert "git status" in html
+
+
+def test_render_outside_filter_shows_only_outside_rows():
+    now = time.time()
+    entries = [
+        {"ts": now, "tool": "Read", "paths": ["/ok.txt"], "outside": [], "blocked": False},
+        {"ts": now, "tool": "Read", "paths": ["/out.txt"], "outside": ["/out.txt"], "blocked": False},
+    ]
+    html = dashboard.render(entries, flt="outside")
+    assert "/out.txt" in html
+    assert "/ok.txt" not in html

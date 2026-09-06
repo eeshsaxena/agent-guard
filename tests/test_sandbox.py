@@ -85,3 +85,12 @@ def test_unknown_platform_refuses():
     argv, msg = sandbox.build_sandbox_command(["ls"], [], system="Plan9", which=_which())
     assert argv is None
     assert "Plan9" in msg
+
+
+def test_macos_profile_without_roots_omits_the_writable_roots_block():
+    # With no roots configured the profile still denies by default and keeps the
+    # base reads, but grants no read+write anywhere in user space.
+    profile = sandbox.macos_profile([])
+    assert "(deny default)" in profile
+    assert "file-read* file-write*" not in profile
+    assert '(literal "/dev/null")' in profile

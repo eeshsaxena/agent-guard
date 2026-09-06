@@ -1,3 +1,4 @@
+import pytest
 
 from agentguard import settings
 
@@ -56,3 +57,16 @@ def test_load_save_roundtrip(tmp_path):
 
 def test_load_missing_file_returns_empty(tmp_path):
     assert settings.load(tmp_path / "nope.json") == {}
+
+
+def test_load_invalid_json_aborts_with_a_clear_message(tmp_path):
+    # A corrupt settings.json must stop install/harden cleanly, not crash mid-edit.
+    p = tmp_path / "settings.json"
+    p.write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        settings.load(p)
+
+
+def test_remove_hook_when_none_present_is_zero():
+    assert settings.remove_hook({}) == 0
+    assert settings.remove_hook({"hooks": {}}) == 0

@@ -129,3 +129,66 @@ def test_install_uninstall_roundtrip(tmp_path, monkeypatch):
 
     assert cli.main(["uninstall"]) == 0
     assert settings.find_hook(json.loads(s.read_text(encoding="utf-8"))) is False
+
+
+def test_run_reports_when_command_cannot_launch(ag_config, monkeypatch, capsys):
+    monkeypatch.setattr(sandbox, "build_sandbox_command", lambda cmd, roots: (["bwrap", "--", *cmd], ""))
+
+    def boom(argv):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr(cli.subprocess, "call", boom)
+    assert cli.main(["run", "--", "ls"]) == 1
+    assert "could not launch" in capsys.readouterr().err
+
+
+def test_dashboard_command_handles_ctrl_c(ag_config, monkeypatch, capsys):
+    def raise_ctrl_c(port):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.dashboard, "serve", raise_ctrl_c)
+    assert cli.main(["dashboard"]) == 0
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_hook_invocation_prefers_console_script(monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/agentguard")
+    exe, args = cli._hook_invocation()
+    assert exe == "agentguard" and args == ["hook"]
+
+
+def test_hook_invocation_falls_back_to_shim(monkeypatch):
+    import shutil
+    import sys
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    exe, args = cli._hook_invocation()
+    assert exe == sys.executable
+    assert args and args[0].endswith("guard.py")
+
+
+def test_install_does_not_overwrite_existing_config(tmp_path, monkeypatch):
+    s = tmp_path / ".claude" / "settings.json"
+    c = tmp_path / ".agentguard" / "config.json"
+    s.parent.mkdir(parents=True)
+    c.parent.mkdir(parents=True)
+    c.write_text(json.dumps({"enforce": False, "allowed_roots": []}), encoding="utf-8")
+    monkeypatch.setattr(settings, "settings_path", lambda: s)
+    monkeypatch.setattr(config, "config_path", lambda: c)
+    assert cli.main(["install"]) == 0
+    assert json.loads(c.read_text(encoding="utf-8")) == {"enforce": False, "allowed_roots": []}
+
+
+def test_status_reports_recent_activity(ag_config, capsys):
+    _log_some(ag_config, n=2)
+    assert cli.main(["status"]) == 0
+    assert "recent" in capsys.readouterr().out
+
+
+def test_harden_apply_is_idempotent(tmp_path, monkeypatch, capsys):
+    s = tmp_path / "settings.json"
+    monkeypatch.setattr(settings, "settings_path", lambda: s)
+    assert cli.main(["harden", "--apply"]) == 0
+    capsys.readouterr()
+    assert cli.main(["harden", "--apply"]) == 0  # nothing new to add the 2nd time
+    assert "already present" in capsys.readouterr().out
