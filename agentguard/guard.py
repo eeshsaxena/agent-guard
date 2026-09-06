@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config
+from . import bashinspect, config
 
 # Tools whose paths we enforce (they read or write file contents).
 ENFORCED = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"}
@@ -60,6 +60,14 @@ def run(stdin_text: str) -> int:
     outside = [p for p in paths if cfg.roots and not _inside_any(p, cfg.roots)]
     blocked = bool(outside) and cfg.enforce and tool in ENFORCED
 
+    findings = []
+    if tool == "Bash" and cfg.inspect_bash:
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            findings = bashinspect.inspect(command, cfg.roots)
+    bash_blocked = cfg.bash_enforce and any(f.severity == bashinspect.BLOCK for f in findings)
+    blocked = blocked or bash_blocked
+
     _append_log(cfg.log_path, {
         "ts": time.time(),
         "tool": tool,
@@ -67,16 +75,26 @@ def run(stdin_text: str) -> int:
         "command": tool_input.get("command") if tool == "Bash" else None,
         "url": tool_input.get("url") if tool == "WebFetch" else None,
         "outside": outside,
+        "suspicious": bool(findings),
+        "findings": [f.as_dict() for f in findings],
         "blocked": blocked,
         "cwd": data.get("cwd"),
     })
 
     if blocked:
-        print(
-            f"agent-guard blocked {tool}: path outside allowed folders -> {outside}. "
-            f"Add the folder to {config.config_path()} (allowed_roots) if intended.",
-            file=sys.stderr,
-        )
+        if bash_blocked:
+            reasons = "; ".join(f.detail for f in findings if f.severity == bashinspect.BLOCK)
+            print(
+                f"agent-guard blocked Bash: {reasons}. "
+                f'Set "bash_enforce": false in {config.config_path()} to allow.',
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"agent-guard blocked {tool}: path outside allowed folders -> {outside}. "
+                f"Add the folder to {config.config_path()} (allowed_roots) if intended.",
+                file=sys.stderr,
+            )
         return 2
     return 0
 

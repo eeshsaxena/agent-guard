@@ -35,6 +35,8 @@ class Config:
     roots: list[Path]
     log_path: Path
     enforce: bool
+    inspect_bash: bool = True
+    bash_enforce: bool = True
 
 
 def load() -> Config:
@@ -52,4 +54,10 @@ def load() -> Config:
     log_path = Path(os.path.expandvars(os.path.expanduser(
         cfg.get("log_path", str(path.parent / "access-log.jsonl"))
     )))
-    return Config(roots=roots, log_path=log_path, enforce=bool(cfg.get("enforce", True)))
+    return Config(
+        roots=roots,
+        log_path=log_path,
+        enforce=bool(cfg.get("enforce", True)),
+        inspect_bash=bool(cfg.get("inspect_bash", True)),
+        bash_enforce=bool(cfg.get("bash_enforce", True)),
+    )

@@ -5,5 +5,7 @@
     "C:\\Users\\you\\Downloads",
     "C:\\Users\\you\\.claude"
   ],
-  "log_path": "C:\\Users\\you\\.agentguard\\access-log.jsonl"
+  "log_path": "C:\\Users\\you\\.agentguard\\access-log.jsonl",
+  "inspect_bash": true,
+  "bash_enforce": true
 }

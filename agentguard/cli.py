@@ -1,6 +1,7 @@
 """The `agentguard` command.
 
     agentguard hook                 # run the PreToolUse guard (reads tool JSON on stdin)
+    agentguard run -- <command>     # run a command inside an OS filesystem sandbox
     agentguard dashboard [--port]   # open the live activity dashboard
     agentguard install              # add the PreToolUse hook to ~/.claude/settings.json
     agentguard uninstall            # remove it again
@@ -13,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, config, dashboard, guard, settings
+from . import __version__, config, dashboard, guard, sandbox, settings
 
 
 def _fix_stdout_encoding() -> None:
@@ -31,6 +33,29 @@ def _fix_stdout_encoding() -> None:
 
 def cmd_hook(args) -> int:
     return guard.main()
+
+
+def cmd_run(args) -> int:
+    command = list(args.command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        print("usage: agentguard run -- <command> [args...]", file=sys.stderr)
+        return 2
+    roots = [str(r) for r in config.load().roots]
+    argv, message = sandbox.build_sandbox_command(command, roots)
+    if argv is None:
+        print(message, file=sys.stderr)
+        return 1
+    print(
+        f"agent-guard: sandboxing with {argv[0]}; writable roots: {', '.join(roots) or '(none configured)'}",
+        file=sys.stderr,
+    )
+    try:
+        return subprocess.call(argv)
+    except FileNotFoundError:
+        print(f"agent-guard run: could not launch {argv[0]}.", file=sys.stderr)
+        return 1
 
 
 def cmd_dashboard(args) -> int:
@@ -69,6 +94,8 @@ def cmd_install(args) -> int:
             "enforce": True,
             "allowed_roots": config.default_roots(),
             "log_path": str(cfg_path.parent / "access-log.jsonl"),
+            "inspect_bash": True,
+            "bash_enforce": True,
         }, indent=2), encoding="utf-8")
         print(f"wrote default config: {cfg_path}")
     print(f"installed PreToolUse hook in {path}")
@@ -133,6 +160,10 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("hook", help="run the PreToolUse guard (reads tool JSON on stdin)").set_defaults(func=cmd_hook)
+
+    p = sub.add_parser("run", help="run a command inside an OS filesystem sandbox (allowed_roots only)")
+    p.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args...]")
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("dashboard", help="serve the live activity dashboard")
     p.add_argument("--port", type=int, default=dashboard.DEFAULT_PORT)

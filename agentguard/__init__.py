@@ -5,7 +5,7 @@ access outside folders you allow, plus a local live dashboard. Stdlib only.
 """
 from __future__ import annotations
 
-from . import config, dashboard, guard
+from . import bashinspect, config, dashboard, guard, sandbox
 
-__all__ = ["config", "dashboard", "guard", "__version__"]
-__version__ = "0.1.0"
+__all__ = ["bashinspect", "config", "dashboard", "guard", "sandbox", "__version__"]
+__version__ = "0.2.0"
