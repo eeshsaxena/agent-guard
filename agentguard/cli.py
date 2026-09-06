@@ -1,6 +1,6 @@
 """The `agentguard` command.
 
-    agentguard hook                 # run the PreToolUse guard (reads tool JSON on stdin)
+    agentguard hook [--agent NAME]  # run the pre-tool-call guard (default agent: claude-code)
     agentguard run -- <command>     # run a command inside an OS filesystem sandbox
     agentguard dashboard [--port]   # open the live activity dashboard
     agentguard verify-log           # check the audit log's hash chain for tampering
@@ -20,7 +20,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, config, dashboard, guard, integrity, sandbox, settings
+from . import __version__, adapters, config, core, dashboard, integrity, sandbox, settings
 
 
 def _fix_stdout_encoding() -> None:
@@ -33,7 +33,14 @@ def _fix_stdout_encoding() -> None:
 
 
 def cmd_hook(args) -> int:
-    return guard.main()
+    adapter = adapters.get_adapter(args.agent)
+    if adapter is None:
+        print(
+            f"agentguard hook: unknown agent {args.agent!r}. Available: {', '.join(adapters.available())}.",
+            file=sys.stderr,
+        )
+        return 2
+    return core.run_adapter(adapter, sys.stdin.read())
 
 
 def cmd_run(args) -> int:
@@ -192,7 +199,12 @@ def main(argv=None) -> int:
     ap.add_argument("--version", action="version", version=f"agent-guard {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("hook", help="run the PreToolUse guard (reads tool JSON on stdin)").set_defaults(func=cmd_hook)
+    p = sub.add_parser("hook", help="run the pre-tool-call guard (reads the tool event on stdin)")
+    p.add_argument(
+        "--agent", default=adapters.DEFAULT,
+        help=f"which agent's event format to parse (default: {adapters.DEFAULT}; also: {', '.join(adapters.available())})",
+    )
+    p.set_defaults(func=cmd_hook)
 
     p = sub.add_parser("run", help="run a command inside an OS filesystem sandbox (allowed_roots only)")
     p.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> [args...]")
