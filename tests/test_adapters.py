@@ -170,3 +170,41 @@ def test_cli_hook_default_is_claude_code(ag_config, monkeypatch):
     payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": outside}})
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     assert cli.main(["hook"]) == 2  # same as --agent claude-code
+
+
+# --- more normalization edges --------------------------------------------
+
+
+def test_gemini_read_many_files_fences_a_path_list(ag_config):
+    # read_many_files carries a list under `paths`; every entry must be fenced.
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    outside = str(ag_config.tmp / "elsewhere" / "x.txt")
+    payload = {"tool_name": "read_many_files", "tool_input": {"paths": [inside, outside]}}
+    assert _run("gemini-cli", payload) == 2
+    assert _read_log(ag_config.log)[-1]["outside"] == [outside]
+
+
+def test_generic_non_dict_json_is_an_empty_event(ag_config):
+    # A JSON array/scalar on stdin is not a valid event: allow, don't crash.
+    assert core.run_adapter(adapters.get_adapter("generic"), json.dumps([1, 2, 3])) == 0
+    assert _read_log(ag_config.log)[-1]["tool"] == ""
+
+
+def test_generic_infers_web_and_tool_labels(ag_config):
+    assert _run("generic", {"url": "https://example.com"}) == 0
+    assert _read_log(ag_config.log)[-1]["tool"] == "web"
+    assert _run("generic", {}) == 0
+    assert _read_log(ag_config.log)[-1]["tool"] == "tool"
+
+
+def test_cursor_non_dict_json_is_an_empty_event(ag_config, capsys):
+    code = core.run_adapter(adapters.get_adapter("cursor"), json.dumps("nope"))
+    assert code == 0
+    assert json.loads(capsys.readouterr().out.strip())["permission"] == "allow"
+
+
+def test_cursor_unknown_event_allows(ag_config, capsys):
+    code = _run("cursor", {"hook_event_name": "someOtherEvent", "command": "rm -rf /"})
+    assert code == 0  # command ignored: not a shell event
+    entry = _read_log(ag_config.log)[-1]
+    assert entry["tool"] == "someOtherEvent" and entry["command"] is None
