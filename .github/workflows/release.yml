@@ -1,6 +1,6 @@
 name: Release to PyPI
 
-# Publishes to PyPI on a version tag using Trusted Publishing (OIDC) — no API
+# Publishes to PyPI on a version tag using Trusted Publishing (OIDC): no API
 # token stored in the repo. One-time setup on PyPI:
 #   PyPI -> your project -> Publishing -> add a GitHub trusted publisher:
 #     owner=eeshsaxena, repo=agent-guard, workflow=release.yml, environment=pypi

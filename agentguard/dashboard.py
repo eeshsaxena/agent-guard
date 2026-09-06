@@ -113,7 +113,7 @@ def render(entries: list[dict], flt: str = "all") -> str:
     alert = ""
     if blocked:
         last = blocked[-1]
-        alert = f'<div class="alert">⛔ {len(blocked)} blocked attempt(s). Latest: {html.escape(_target(last)[:120])}</div>'
+        alert = f'<div class="alert"><b>{len(blocked)} blocked attempt(s).</b> Latest: {html.escape(_target(last)[:120])}</div>'
 
     return f"""<!doctype html><html><head><meta charset=utf-8><meta http-equiv="refresh" content="2">
 <title>agent-guard</title><style>

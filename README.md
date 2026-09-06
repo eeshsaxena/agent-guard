@@ -3,7 +3,7 @@
 **See what your AI coding agent touches, and fence it in.**
 
 `agent-guard` is a [Claude Code](https://claude.com/claude-code) hook that runs
-before every tool call. It does two things:
+before every tool call. It does three things:
 
 1. **Logs** every read, write, edit, shell command, and web fetch to a local
    audit trail, viewable on a **live dashboard**.
@@ -63,11 +63,11 @@ it off the box without naming a path the guard sees. agent-guard parses each
 `Bash` command and records findings, biased hard toward **very low false
 positives** so it never trips over normal dev work:
 
-- **credential reads** — `~/.ssh`, `~/.aws`, `.env` / `*.env`, `*.pem`, `*.key`,
+- **credential reads**: `~/.ssh`, `~/.aws`, `.env` / `*.env`, `*.pem`, `*.key`,
   `.netrc`, browser `Login Data`, and similar
-- **network egress** — `curl` / `wget` / `nc` / `scp` / `rsync` … to a remote host
-- **destructive ops** — `rm -rf` / `dd` / `mkfs` on an absolute path outside your roots
-- **outside-root access** — `cat` / `cp` / `mv` / `tee` (or a redirect) of an
+- **network egress**: `curl` / `wget` / `nc` / `scp` / `rsync` and similar, to a remote host
+- **destructive ops**: `rm -rf` / `dd` / `mkfs` on an absolute path outside your roots
+- **outside-root access**: `cat` / `cp` / `mv` / `tee` (or a redirect) of an
   absolute path outside your roots
 
 By default these are **flagged** (logged as suspicious, shown on the dashboard)
@@ -78,8 +78,8 @@ credential material *and* sends it to a remote host in the same line (e.g.
 
 Two config keys control it (both default `true`):
 
-- **`inspect_bash`** — inspect Bash commands at all.
-- **`bash_enforce`** — let a credential-exfil finding actually block (exit 2).
+- **`inspect_bash`**: inspect Bash commands at all.
+- **`bash_enforce`**: let a credential-exfil finding actually block (exit 2).
   Set `false` to flag everything and block nothing.
 
 Config is re-read on every call, so edits take effect immediately, no restart.
@@ -130,14 +130,14 @@ Turn it off with `"alerts": false`.
 }
 ```
 
-- **`allowed_roots`** — folders the agent may read/write. Everything else is
+- **`allowed_roots`**: folders the agent may read/write. Everything else is
   outside. Add your project directories here.
-- **`enforce`** — `true` blocks; set `false` to **log-only** (watch first, fence
+- **`enforce`**: `true` blocks; set `false` to **log-only** (watch first, fence
   later).
-- **`log_path`** — where the audit trail is written.
-- **`inspect_bash`** / **`bash_enforce`** — Bash inspection, see
+- **`log_path`**: where the audit trail is written.
+- **`inspect_bash`** / **`bash_enforce`**: Bash inspection, see
   [above](#bash-inspection).
-- **`alerts`** — desktop notification on a block. `true` by default; set `false`
+- **`alerts`**: desktop notification on a block. `true` by default; set `false`
   to stay quiet.
 
 Point somewhere else with `AGENTGUARD_CONFIG=/path/to/config.json`.
@@ -171,7 +171,7 @@ Support is per-OS, and honest about it:
 | --- | --- | --- |
 | Linux | `bwrap` (bubblewrap), else `firejail` | Roots are bind-mounted read-write; the rest of `$HOME` is not visible. |
 | macOS | `sandbox-exec` | A generated seatbelt profile: deny by default, read+write only inside the roots. |
-| Windows | — | **No OS-level sandbox.** There is no clean native equivalent, so `run` refuses rather than pretend. Use Docker or WSL2 for a real fence; the hook still gives you advisory protection. |
+| Windows | none | **No OS-level sandbox.** There is no clean native equivalent, so `run` refuses rather than pretend. Use Docker or WSL2 for a real fence; the hook still gives you advisory protection. |
 
 If no sandbox tool is found on Linux or macOS, `run` prints how to install one
 and refuses to run the command unsandboxed.
@@ -234,13 +234,13 @@ and throws when it exits non-zero.
 Not every tool exposes a pre-tool hook that can *stop* a call, and this section
 stays honest about that rather than shipping a fake adapter:
 
-- **Codex CLI** — its `notify` hook is a doorbell that fires *after* the fact and
+- **Codex CLI**: its `notify` hook is a doorbell that fires *after* the fact and
   [cannot block](https://backgrind.com/blog/codex-cli-notifications/); synchronous
   `PreToolUse`-style blocking is still
   [an emerging proposal](https://github.com/openai/codex/issues/14882).
-- **opencode** — hooks are in-process TypeScript plugins, not an external command;
+- **opencode**: hooks are in-process TypeScript plugins, not an external command;
   integrate with the `generic` adapter from a `tool.execute.before` plugin.
-- **Cline, aider** — no external pre-tool hook that vetoes a call.
+- **Cline, aider**: no external pre-tool hook that vetoes a call.
 
 For all of these, use the `generic` adapter where you can pipe an event, and
 `agentguard run` as the universal fallback fence. (Citations above are what these
@@ -252,7 +252,7 @@ adapter to add.)
 An adapter is a small class in `agentguard/adapters.py`. If the agent's hook reads
 a tool event on stdin and blocks with exit 2, subclass `_StdinExitAdapter` and set
 its tool vocabulary (which tool names are file ops, where the path / command / url
-live) — that's the whole `gemini-cli` adapter. If it speaks a different protocol
+live): that's the whole `gemini-cli` adapter. If it speaks a different protocol
 (like Cursor's stdout verdict), give it its own `parse` and `emit`. Then add it to
 the registry. The shared `core.decide` is what every adapter calls, so a new agent
 inherits the exact same policy the Claude Code hook enforces.
@@ -268,13 +268,13 @@ inherits the exact same policy the Claude Code hook enforces.
 | `agentguard verify-log` | Recompute the audit log's hash chain; report tampering and exit non-zero if broken. |
 | `agentguard status` | Print config, whether the hook is installed, and recent counts. |
 | `agentguard harden` | Show credential read-deny rules to add to Claude Code's own permissions (dry-run; `--apply` to write). |
-| `agentguard hook [--agent NAME]` | The guard itself — what the agent invokes on each tool call. `--agent` selects the wire format (default `claude-code`; see [Beyond Claude Code](#beyond-claude-code-other-agents)). You won't run this by hand. |
+| `agentguard hook [--agent NAME]` | The guard itself: what the agent invokes on each tool call. `--agent` selects the wire format (default `claude-code`; see [Beyond Claude Code](#beyond-claude-code-other-agents)). You won't run this by hand. |
 
 ### `harden`
 
 The folder fence stops access *outside* your roots. `harden` adds a second layer
 using Claude Code's native `permissions.deny`: it keeps tools away from
-credential files (`.ssh`, `.aws`, `.env`, `*.pem`, browser login data, …)
+credential files (`.ssh`, `.aws`, `.env`, `*.pem`, browser login data, and similar)
 wherever they live. It's a dry-run by default:
 
 ```bash
