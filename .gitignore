@@ -7,6 +7,9 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 .venv/
 venv/
 access-log.jsonl
