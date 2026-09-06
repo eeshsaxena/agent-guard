@@ -207,3 +207,35 @@ def test_append_to_blank_only_log_starts_at_genesis(ag_config):
     guard.run(_payload("Read", file_path=inside))
     lines = [ln for ln in ag_config.log.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert json.loads(lines[-1])["prev_hash"] == integrity.GENESIS
+
+
+def test_large_entry_does_not_break_chain(ag_config):
+    # A log entry larger than the tail read window (64 KB): the next entry must
+    # still chain onto it, not fall back to GENESIS and fail verify-log.
+    big = "echo " + "A" * 70000  # benign, but the logged entry is well over 64 KB
+    assert guard.run(_payload("Bash", command=big)) == 0
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    assert guard.run(_payload("Read", file_path=inside)) == 0
+    log = _read_log(ag_config.log)
+    assert len(log) == 2
+    assert len(json.dumps(log[0])) > 65536  # the first entry really is oversized
+    assert log[1]["prev_hash"] == log[0]["hash"]  # chained onto the big entry
+    ok, idx, _ = integrity.verify_chain(log)  # what verify-log recomputes
+    assert ok is True and idx is None  # INTACT
+
+
+def _payload_cwd(tool, cwd, **tool_input):
+    return json.dumps({"tool_name": tool, "tool_input": tool_input, "cwd": cwd})
+
+
+def test_relative_path_with_cwd_inside_root_is_allowed(ag_config):
+    # A relative target resolves against the event's cwd, not the hook's cwd.
+    cwd = str(ag_config.tmp / "project")
+    assert guard.run(_payload_cwd("Read", cwd, file_path="a.txt")) == 0
+    assert _read_log(ag_config.log)[-1]["outside"] == []
+
+
+def test_relative_path_with_cwd_outside_root_is_blocked(ag_config):
+    cwd = str(ag_config.tmp / "elsewhere")
+    assert guard.run(_payload_cwd("Read", cwd, file_path="secret.txt")) == 2
+    assert _read_log(ag_config.log)[-1]["blocked"] is True

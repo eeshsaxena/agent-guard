@@ -55,9 +55,15 @@ class Decision:
     outside: list[str]
 
 
-def _inside_any(path: str, roots: list[Path]) -> bool:
+def _inside_any(path: str, roots: list[Path], cwd: str | None = None) -> bool:
     try:
-        p = Path(os.path.expandvars(os.path.expanduser(path))).resolve()
+        p = Path(os.path.expandvars(os.path.expanduser(path)))
+        # A relative path is resolved against the cwd the adapter captured, not
+        # the hook process's own cwd. Claude Code always passes absolute paths,
+        # so this only matters for agents/wrappers that send relative ones.
+        if not p.is_absolute() and cwd:
+            p = Path(cwd) / p
+        p = p.resolve()
     except Exception:
         return True  # unresolvable -> do not block
     for r in roots:
@@ -76,7 +82,7 @@ def decide(event: Event, cfg) -> Decision:
     naturally skips shell/web calls. A command is inspected only when it is a
     string. Nothing here raises: inspection and path resolution fail open.
     """
-    outside = [p for p in event.paths if cfg.roots and not _inside_any(p, cfg.roots)]
+    outside = [p for p in event.paths if cfg.roots and not _inside_any(p, cfg.roots, event.cwd)]
     file_block = bool(outside) and cfg.enforce
 
     findings = []
@@ -107,23 +113,51 @@ def build_log_entry(event: Event, decision: Decision) -> dict:
     }
 
 
+def _last_complete_line(fh) -> str:
+    """The final non-blank, newline-complete line of an open binary log.
+
+    Walks backward in chunks, so the common case (a small last entry) reads only
+    the tail, but a single entry larger than one chunk is still read in full
+    rather than truncated. Only lines whose left boundary is inside the buffer
+    (or the very first line, once the file start is reached) are ever returned,
+    so a partial line is never mistaken for a complete one.
+    """
+    step = 65536
+    fh.seek(0, os.SEEK_END)
+    pos = fh.tell()
+    buf = b""
+    while pos > 0:
+        read = min(step, pos)
+        pos -= read
+        fh.seek(pos)
+        buf = fh.read(read) + buf
+        stripped = buf.rstrip(b"\r\n \t")  # drop any trailing blank lines
+        nl = stripped.rfind(b"\n")
+        if nl != -1:
+            # Everything after this newline is a complete final line (buf runs to
+            # EOF), and it is non-blank because we just stripped trailing space.
+            return stripped[nl + 1:].decode("utf-8", "ignore")
+        # No in-buffer left boundary yet: keep reading backward.
+    # Reached the start of the file; the first line in buf is now complete.
+    for line in reversed(buf.split(b"\n")):
+        if line.strip():
+            return line.decode("utf-8", "ignore")
+    return ""
+
+
 def _last_hash(log_path: Path) -> str:
     """Hash of the most recent entry, for chaining the next one onto it.
 
-    Reads only the file's tail so this stays cheap on a large log. A missing
-    file, a legacy line with no hash, or any error yields GENESIS: the chain just
-    (re)starts here rather than the hook failing.
+    Reads the last complete line of the log regardless of its size, so a single
+    entry larger than the read window still chains correctly instead of tripping
+    a false tamper alarm. A missing file, a legacy line with no hash, or any
+    error yields GENESIS: the chain just (re)starts here rather than the hook
+    failing.
     """
     try:
         with log_path.open("rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            fh.seek(max(0, size - 65536))
-            tail = fh.read().decode("utf-8", "ignore")
-        for line in reversed(tail.splitlines()):
-            line = line.strip()
-            if not line:
-                continue
+            line = _last_complete_line(fh)
+        if line:
             obj = json.loads(line)
             h = obj.get("hash") if isinstance(obj, dict) else None
             return h if isinstance(h, str) else integrity.GENESIS

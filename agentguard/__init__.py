@@ -11,4 +11,4 @@ __all__ = [
     "adapters", "alerts", "bashinspect", "config", "core", "dashboard",
     "guard", "integrity", "sandbox", "__version__",
 ]
-__version__ = "0.4.0"
+__version__ = "0.4.1"
