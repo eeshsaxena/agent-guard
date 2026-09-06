@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import bashinspect, config
+from . import alerts, bashinspect, config, integrity
 
 # Tools whose paths we enforce (they read or write file contents).
 ENFORCED = {"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"}
@@ -37,11 +37,56 @@ def _inside_any(path: str, roots: list[Path]) -> bool:
     return False
 
 
+def _last_hash(log_path: Path) -> str:
+    """Hash of the most recent entry, for chaining the next one onto it.
+
+    Reads only the file's tail so this stays cheap on a large log. A missing
+    file, a legacy line with no hash, or any error yields GENESIS: the chain just
+    (re)starts here rather than the hook failing.
+    """
+    try:
+        with log_path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 65536))
+            tail = fh.read().decode("utf-8", "ignore")
+        for line in reversed(tail.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            h = obj.get("hash") if isinstance(obj, dict) else None
+            return h if isinstance(h, str) else integrity.GENESIS
+    except Exception:
+        pass
+    return integrity.GENESIS
+
+
 def _append_log(log_path: Path, entry: dict) -> None:
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            entry = integrity.chain_entry(entry, _last_hash(log_path))
+        except Exception:
+            pass  # never let hashing drop the audit record; write it unchained
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
+def _alert(cfg, tool: str, bash_blocked: bool, findings: list, outside: list) -> None:
+    """Pop a best-effort desktop notification for a block. Fail-safe: swallows
+    everything so a notifier problem can never delay or crash the hook."""
+    if not cfg.alerts:
+        return
+    try:
+        if bash_blocked:
+            detail = "; ".join(f.detail for f in findings if f.severity == bashinspect.BLOCK)
+            message = f"Blocked Bash: {detail}" if detail else "Blocked a Bash command"
+        else:
+            message = f"Blocked {tool}: path outside allowed folders -> {', '.join(outside)}"
+        alerts.notify("agent-guard blocked a tool call", message[:200], enabled=cfg.alerts)
     except Exception:
         pass
 
@@ -82,6 +127,7 @@ def run(stdin_text: str) -> int:
     })
 
     if blocked:
+        _alert(cfg, tool, bash_blocked, findings, outside)
         if bash_blocked:
             reasons = "; ".join(f.detail for f in findings if f.severity == bashinspect.BLOCK)
             print(

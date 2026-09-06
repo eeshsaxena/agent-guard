@@ -1,6 +1,6 @@
 import json
 
-from agentguard import guard
+from agentguard import alerts, guard, integrity
 
 
 def _read_log(path):
@@ -118,3 +118,56 @@ def test_no_roots_configured_blocks_nothing(ag_config):
 def test_notebook_path_key_is_checked(ag_config):
     outside = str(ag_config.tmp / "elsewhere" / "nb.ipynb")
     assert guard.run(_payload("NotebookEdit", notebook_path=outside)) == 2
+
+
+def test_written_entries_are_hash_chained(ag_config):
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    for _ in range(3):
+        guard.run(_payload("Read", file_path=inside))
+    log = _read_log(ag_config.log)
+    assert all("hash" in e and "prev_hash" in e for e in log)
+    assert log[0]["prev_hash"] == integrity.GENESIS
+    assert log[1]["prev_hash"] == log[0]["hash"]
+    ok, idx, _ = integrity.verify_chain(log)
+    assert ok is True and idx is None
+
+
+def test_hashing_preserves_existing_fields(ag_config):
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    guard.run(_payload("Read", file_path=inside))
+    entry = _read_log(ag_config.log)[-1]
+    for key in ("ts", "tool", "paths", "outside", "blocked", "cwd"):
+        assert key in entry
+
+
+def test_chain_continues_across_separate_calls(ag_config):
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    guard.run(_payload("Read", file_path=inside))  # first process/appends
+    guard.run(_payload("Read", file_path=inside))  # reads the tail, links on
+    log = _read_log(ag_config.log)
+    assert log[1]["prev_hash"] == log[0]["hash"]
+
+
+def test_block_fires_desktop_alert(ag_config, monkeypatch):
+    calls = []
+    monkeypatch.setattr(alerts, "notify", lambda *a, **k: calls.append((a, k)) or True)
+    outside = str(ag_config.tmp / "elsewhere" / "x.txt")
+    assert guard.run(_payload("Read", file_path=outside)) == 2
+    assert len(calls) == 1
+
+
+def test_allowed_call_fires_no_alert(ag_config, monkeypatch):
+    calls = []
+    monkeypatch.setattr(alerts, "notify", lambda *a, **k: calls.append((a, k)) or True)
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    assert guard.run(_payload("Read", file_path=inside)) == 0
+    assert calls == []
+
+
+def test_alerts_false_suppresses_alert(ag_config, monkeypatch):
+    _write_cfg(ag_config, alerts=False)
+    calls = []
+    monkeypatch.setattr(alerts, "notify", lambda *a, **k: calls.append((a, k)) or True)
+    outside = str(ag_config.tmp / "elsewhere" / "x.txt")
+    assert guard.run(_payload("Read", file_path=outside)) == 2  # still blocked
+    assert calls == []  # but no notification

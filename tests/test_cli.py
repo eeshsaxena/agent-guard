@@ -1,6 +1,6 @@
 import json
 
-from agentguard import cli, config, sandbox, settings
+from agentguard import cli, config, guard, sandbox, settings
 
 
 def test_hook_subcommand_reads_stdin(ag_config, monkeypatch, capsys):
@@ -58,6 +58,59 @@ def test_run_invokes_wrapped_command(ag_config, monkeypatch):
     monkeypatch.setattr(cli.subprocess, "call", fake_call)
     assert cli.main(["run", "--", "echo", "hi"]) == 0
     assert seen["argv"] == ["bwrap", "--", "echo", "hi"]
+
+
+def _log_some(ag_config, n=3):
+    inside = str(ag_config.tmp / "project" / "a.txt")
+    for _ in range(n):
+        guard.run(json.dumps({"tool_name": "Read", "tool_input": {"file_path": inside}}))
+
+
+def test_verify_log_intact(ag_config, capsys):
+    _log_some(ag_config)
+    assert cli.main(["verify-log"]) == 0
+    assert "INTACT" in capsys.readouterr().out
+
+
+def test_verify_log_detects_in_place_edit(ag_config, capsys):
+    _log_some(ag_config)
+    lines = ag_config.log.read_text(encoding="utf-8").splitlines()
+    entry = json.loads(lines[1])
+    entry["tool"] = "Bash"                    # edit content, keep the stored hash
+    lines[1] = json.dumps(entry)
+    ag_config.log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert cli.main(["verify-log"]) == 1
+    assert "BROKEN" in capsys.readouterr().out
+
+
+def test_verify_log_detects_deleted_line(ag_config, capsys):
+    _log_some(ag_config, n=4)
+    lines = ag_config.log.read_text(encoding="utf-8").splitlines()
+    del lines[1]
+    ag_config.log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert cli.main(["verify-log"]) == 1
+
+
+def test_verify_log_tolerates_corrupt_legacy_line(ag_config, capsys):
+    # A malformed line before any hashed entry is legacy noise, not tampering.
+    ag_config.log.write_text('{"tool":"Read"}\nnot json at all\n', encoding="utf-8")
+    assert cli.main(["verify-log"]) == 0
+    out = capsys.readouterr().out
+    assert "INTACT" in out and "unreadable" in out
+
+
+def test_verify_log_detects_corruption_after_chain_starts(ag_config, capsys):
+    _log_some(ag_config)                          # hashed entries
+    with ag_config.log.open("a", encoding="utf-8") as fh:
+        fh.write("}corrupt truncated line\n")     # break after the chain started
+    assert cli.main(["verify-log"]) == 1
+    assert "BROKEN" in capsys.readouterr().out
+
+
+def test_verify_log_no_file_is_ok(ag_config, capsys):
+    assert not ag_config.log.exists()
+    assert cli.main(["verify-log"]) == 0
+    assert "nothing to verify" in capsys.readouterr().out
 
 
 def test_install_uninstall_roundtrip(tmp_path, monkeypatch):

@@ -2,6 +2,15 @@ import json
 
 import pytest
 
+from agentguard import alerts
+
+
+@pytest.fixture(autouse=True)
+def _no_desktop_notifications(monkeypatch):
+    """Never pop a real OS notification while the suite runs; the alert command
+    is still built, just not launched."""
+    monkeypatch.setattr(alerts, "_spawn", lambda argv: None)
+
 
 @pytest.fixture
 def ag_config(tmp_path, monkeypatch):

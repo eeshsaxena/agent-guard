@@ -1,7 +1,7 @@
 import json
 import time
 
-from agentguard import dashboard
+from agentguard import dashboard, integrity
 
 
 def _write_log(path, entries):
@@ -53,6 +53,25 @@ def test_render_empty_is_valid():
     html = dashboard.render([])
     assert "<html>" in html
     assert "no file access yet" in html
+
+
+def test_reads_and_renders_hash_chained_entries(tmp_path):
+    now = time.time()
+    prev = integrity.GENESIS
+    lines = []
+    for i in range(3):
+        e = integrity.chain_entry(
+            {"ts": now, "tool": "Read", "paths": [f"/proj/{i}.txt"], "outside": [], "blocked": False}, prev
+        )
+        prev = e["hash"]
+        lines.append(json.dumps(e))
+    p = tmp_path / "log.jsonl"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    entries = dashboard.read_log(p)
+    assert len(entries) == 3
+    assert entries[0]["hash"]                     # new fields carried through
+    html = dashboard.render(entries)              # and render still works on them
+    assert "/proj" in html
 
 
 def test_top_folders_groups_by_parent():

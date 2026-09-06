@@ -43,9 +43,13 @@ Claude Code fires a `PreToolUse` hook before running any tool and passes it the
 tool name and arguments as JSON on stdin. agent-guard:
 
 - appends the call to a JSONL audit log (for the dashboard),
+  [hash-chained](#tamper-evident-audit-log) so later edits are detectable,
 - for file tools (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Grep`,
   `Glob`), resolves the target path and checks it against your allowed roots, and
 - for `Bash`, inspects the command string (see below).
+
+When it blocks something it also fires a best-effort desktop
+[notification](#block-alerts) so you see it the moment it happens.
 
 Exit code `2` blocks the tool and the reason is shown back to the agent; exit `0`
 allows it. **It fails open**: any internal error allows the call, so a bug in the
@@ -79,6 +83,34 @@ Two config keys control it (both default `true`):
 
 Config is re-read on every call, so edits take effect immediately, no restart.
 
+## Tamper-evident audit log
+
+A log the agent writes is only trustworthy if you can tell whether it was edited
+afterwards. Each entry is chained to the one before it: it carries the previous
+entry's `hash` as `prev_hash`, and its own `hash` is a SHA-256 over the entry's
+content plus that `prev_hash`. Editing a past line, dropping one, inserting one,
+or reordering them all break the recomputed chain.
+
+```bash
+agentguard verify-log        # or: sneakoscope verify-log
+```
+
+Prints `INTACT`, or the exact line where the chain first breaks, and **exits
+non-zero when it's broken** so you can run it in CI or a cron check. Entries
+written before this feature existed have no hash; they're treated as a legacy
+prefix and skipped, so old logs still verify and still render on the dashboard.
+The hashing is local and adds nothing you have to trust: `verify-log` recomputes
+the whole chain from the file itself.
+
+## Block alerts
+
+When the guard blocks a call (a path outside your roots, or the credential-exfil
+case), it fires a native desktop notification so you catch it in the moment, not
+later in the log: a PowerShell balloon on Windows, `osascript` on macOS,
+`notify-send` on Linux. It's best-effort by design: spawned without waiting and
+with every error swallowed, so the notifier can never delay or crash the hook.
+Turn it off with `"alerts": false`.
+
 ## Configuration
 
 `agentguard install` writes `~/.agentguard/config.json`:
@@ -92,7 +124,8 @@ Config is re-read on every call, so edits take effect immediately, no restart.
   ],
   "log_path": "C:\\Users\\you\\.agentguard\\access-log.jsonl",
   "inspect_bash": true,
-  "bash_enforce": true
+  "bash_enforce": true,
+  "alerts": true
 }
 ```
 
@@ -103,6 +136,8 @@ Config is re-read on every call, so edits take effect immediately, no restart.
 - **`log_path`** — where the audit trail is written.
 - **`inspect_bash`** / **`bash_enforce`** — Bash inspection, see
   [above](#bash-inspection).
+- **`alerts`** — desktop notification on a block. `true` by default; set `false`
+  to stay quiet.
 
 Point somewhere else with `AGENTGUARD_CONFIG=/path/to/config.json`.
 
@@ -148,6 +183,7 @@ and refuses to run the command unsandboxed.
 | `agentguard uninstall` | Remove it again. |
 | `agentguard run -- <cmd>` | Run a command inside an OS filesystem sandbox (Linux/macOS; see above). |
 | `agentguard dashboard` | Serve the live dashboard. |
+| `agentguard verify-log` | Recompute the audit log's hash chain; report tampering and exit non-zero if broken. |
 | `agentguard status` | Print config, whether the hook is installed, and recent counts. |
 | `agentguard harden` | Show credential read-deny rules to add to Claude Code's own permissions (dry-run; `--apply` to write). |
 | `agentguard hook` | The guard itself — what Claude Code invokes. You won't run this by hand. |

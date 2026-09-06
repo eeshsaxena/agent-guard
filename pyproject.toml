@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sneakoscope"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Sneakoscope for your AI coding agent: a Claude Code hook that logs every tool call and blocks file access outside folders you allow, with a live dashboard. (Import name and CLI: agentguard.)"
 readme = "README.md"
 requires-python = ">=3.8"

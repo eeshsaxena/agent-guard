@@ -3,6 +3,7 @@
     agentguard hook                 # run the PreToolUse guard (reads tool JSON on stdin)
     agentguard run -- <command>     # run a command inside an OS filesystem sandbox
     agentguard dashboard [--port]   # open the live activity dashboard
+    agentguard verify-log           # check the audit log's hash chain for tampering
     agentguard install              # add the PreToolUse hook to ~/.claude/settings.json
     agentguard uninstall            # remove it again
     agentguard status               # show config, whether the hook is installed, recent counts
@@ -19,7 +20,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, config, dashboard, guard, sandbox, settings
+from . import __version__, config, dashboard, guard, integrity, sandbox, settings
 
 
 def _fix_stdout_encoding() -> None:
@@ -66,6 +67,36 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def cmd_verify_log(args) -> int:
+    log_path = config.load().log_path
+    if not log_path.exists():
+        print(f"verify-log: no log at {log_path} (nothing to verify).")
+        return 0
+    entries, lineno, unreadable = [], [], 0
+    for i, line in enumerate(log_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            entries.append(None)  # keep the position; the chain decides if it matters
+            unreadable += 1
+        lineno.append(i)
+    ok, idx, detail = integrity.verify_chain(entries)
+    if not ok:
+        print(f"verify-log: BROKEN at line {lineno[idx]} (entry {idx}): {detail}.")
+        print("The audit log has been edited, reordered, or truncated since it was written.")
+        return 1
+    hashed = sum(1 for e in entries if isinstance(e, dict) and e.get("hash"))
+    note = f", {unreadable} unreadable legacy line(s) skipped" if unreadable else ""
+    if hashed == 0:
+        print(f"verify-log: INTACT. {len(entries)} entries, none hashed yet (pre-hash log{note}) - {log_path}")
+    else:
+        print(f"verify-log: INTACT. {hashed} hashed of {len(entries)} entries verified{note} - {log_path}")
+    return 0
+
+
 def _hook_invocation() -> tuple[str, list[str]]:
     """How Claude Code should call the guard.
 
@@ -96,6 +127,7 @@ def cmd_install(args) -> int:
             "log_path": str(cfg_path.parent / "access-log.jsonl"),
             "inspect_bash": True,
             "bash_enforce": True,
+            "alerts": True,
         }, indent=2), encoding="utf-8")
         print(f"wrote default config: {cfg_path}")
     print(f"installed PreToolUse hook in {path}")
@@ -120,6 +152,7 @@ def cmd_status(args) -> int:
     print(f"agent-guard {__version__}")
     print(f"config     : {config.config_path()}")
     print(f"enforce    : {cfg.enforce}  ({'BLOCKING' if cfg.enforce else 'log-only'})")
+    print(f"alerts     : {cfg.alerts}")
     print(f"log        : {cfg.log_path}")
     print("allowed roots:")
     for r in cfg.roots:
@@ -168,6 +201,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("dashboard", help="serve the live activity dashboard")
     p.add_argument("--port", type=int, default=dashboard.DEFAULT_PORT)
     p.set_defaults(func=cmd_dashboard)
+
+    sub.add_parser(
+        "verify-log", help="recompute the audit-log hash chain and report tampering (exit 1 if broken)"
+    ).set_defaults(func=cmd_verify_log)
 
     sub.add_parser("install", help="add the PreToolUse hook to ~/.claude/settings.json").set_defaults(func=cmd_install)
     sub.add_parser("uninstall", help="remove the PreToolUse hook").set_defaults(func=cmd_uninstall)

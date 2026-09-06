@@ -7,5 +7,6 @@
   ],
   "log_path": "C:\\Users\\you\\.agentguard\\access-log.jsonl",
   "inspect_bash": true,
-  "bash_enforce": true
+  "bash_enforce": true,
+  "alerts": true
 }

@@ -37,6 +37,7 @@ class Config:
     enforce: bool
     inspect_bash: bool = True
     bash_enforce: bool = True
+    alerts: bool = True
 
 
 def load() -> Config:
@@ -60,4 +61,5 @@ def load() -> Config:
         enforce=bool(cfg.get("enforce", True)),
         inspect_bash=bool(cfg.get("inspect_bash", True)),
         bash_enforce=bool(cfg.get("bash_enforce", True)),
+        alerts=bool(cfg.get("alerts", True)),
     )
